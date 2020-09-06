@@ -1,0 +1,206 @@
+
+# you must populate this dict with the schools required -> try talking to the teaching team about this
+
+
+schools = {   
+'ironhack' : 10828,
+'app-academy' : 10525,
+'springboard' : 11035    
+}
+
+import re
+import pandas as pd
+from pandas.io.json import json_normalize
+import requests
+import numpy as np
+
+#aux function to apply regex and remove tags
+  
+def remove_tags(x):###################################
+    TAG_RE = re.compile(r'<[^>]+>')############################
+    return TAG_RE.sub('',x)##############################################
+
+def get_comments_school(school):
+
+  # defines url to make api call to data -> dynamic with school if you want to scrape competition
+  url = "https://www.switchup.org/chimera/v1/school-review-list?mainTemplate=school-review-list&path=%2Fbootcamps%2F" + school + "&isDataTarget=false&page=3&perPage=10000&simpleHtml=true&truncationLength=250"
+  #makes get request and converts answer to json
+  data = requests.get(url).json()
+  #converts json to dataframe
+  reviews =  pd.DataFrame(data['content']['reviews'])
+  
+  reviews['review_body'] = reviews['body'].apply(remove_tags)
+  reviews['school'] = school
+  reviews['school_id'] = schools[str(school)] #############################
+  return reviews
+
+
+###############################################################
+"""# could you write this as a list comprehension? ;)
+comments = []
+
+for school in schools.keys():
+    print(school)
+    comments.append(get_comments_school(school))"""
+    
+comments=[get_comments_school(school) for school in schools.keys()]    
+
+comments = pd.concat(comments)
+
+######################################################################################
+#Create student ID
+
+def generate_id(x):
+    if str(x) != "Anonymous":
+        #re_name=re.findall('([a-z])',str(x.lower()))#
+        generate_id=str(x)[0:1].lower()+str(np.random.choice(99999, 1, replace=False))[1:-1]
+    else:
+        generate_id="a"+str(np.random.choice(99999, 1, replace=True))[1:-1]
+    return generate_id
+
+
+      
+###############################################################
+
+from pandas.io.json import json_normalize
+
+def get_school_info(school, school_id):
+    url = 'https://www.switchup.org/chimera/v1/bootcamp-data?mainTemplate=bootcamp-data%2Fdescription&path=%2Fbootcamps%2F'+ str(school) + '&isDataTarget=false&bootcampId='+ str(school_id) + '&logoTag=logo&truncationLength=250&readMoreOmission=...&readMoreText=Read%20More&readLessText=Read%20Less'
+
+    data = requests.get(url).json()
+
+    data.keys()
+
+    courses = data['content']['courses']
+    courses_df = pd.DataFrame(courses, columns= ['courses'])
+
+    locations = data['content']['locations']
+    locations_df = json_normalize(locations)
+
+    badges_df = pd.DataFrame(data['content']['meritBadges'])
+    
+    website = data['content']['webaddr']
+    description = data['content']['description']
+    logoUrl = data['content']['logoUrl']
+    school_df = pd.DataFrame([website,description,logoUrl]).T
+    school_df.columns =  ['website','description','LogoUrl']
+
+    locations_df['school'] = school
+    courses_df['school'] = school
+    badges_df['school'] = school
+    school_df['school'] = school
+
+    locations_df['school_id'] = school_id
+    courses_df['school_id'] = school_id
+    badges_df['school_id'] = school_id
+    school_df['school_id'] = school_id    
+    
+    # how could you write a similar block of code to the above in order to record the school ID?
+
+    return locations_df, courses_df, badges_df, school_df
+
+locations_list = []
+courses_list = []
+badges_list = []
+schools_list = []
+
+for school, id in schools.items():
+    print(school)
+    a,b,c,d = get_school_info(school,id)
+    locations_list.append(a)
+    courses_list.append(b)
+    badges_list.append(c)
+    schools_list.append(d)
+    
+    
+locations = pd.concat(locations_list)
+locations.head()
+
+courses = pd.concat(courses_list)
+courses.head(10)
+
+badges = pd.concat(badges_list)
+badges.head()
+
+# any data cleaning still missing here? take a look at the description
+schools = pd.concat(schools_list)
+schools.head()
+
+####### Filter comments
+
+comments_filter=comments.copy()
+comments_filter.dropna(subset = ["overallScore","graduatingYear","program"], inplace=True)
+#comments_filter.dropna(axis=0, inplace=True)
+
+#####Create course df + school_course
+
+course=courses[["school_id","courses"]]
+cols=["school_id","course_name"]
+course.columns=cols
+course=pd.DataFrame(course.groupby(['school_id',"course_name"]).first())
+course = course.reset_index()
+course["course_id"]=course["course_name"].apply(generate_id)
+
+course=course.reset_index(drop=True)
+
+school_course=course[["school_id","course_id"]]
+
+course=course[["course_id","course_name"]]
+
+
+
+
+#####Create personal identifica df
+    
+personal=comments_filter[["name","isAlumni","graduatingYear","jobTitle"]]
+personal["name_id"]=personal["name"].apply(generate_id)
+cols=['name_id', 'name', 'isAlumni',"graduatingYear",'jobTitle']
+cols2=['name_id', 'person_name', 'ser_alumi', "grad_year",'job_title']
+personal=personal[cols]
+personal.columns=cols2
+personal=personal.reset_index(drop=True)
+
+#####Create review df
+review=comments_filter[["id","queryDate","tagline","review_body"]]
+review["name_id"]=personal["name_id"]
+review["score_id"]=comments_filter["overallScore"].apply(generate_id)
+review["program_id"]=comments_filter["program"].apply(generate_id)
+cols=['review_id', 'created_at', 'tag_line', 'review_body', 'name_id', 'score_id','program_id']
+review.columns=cols
+review=review.reset_index(drop=True)
+
+#####Create score df
+score=comments_filter[["overallScore","overall","curriculum","jobSupport"]]
+score["score_id"]=review["score_id"]
+
+cols=['score_id','overallScore', 'overall', 'curriculum', 'jobSupport']
+score=score[cols]
+cols2=['score_id','average_score', 'overall', 'curriculum', 'job_support']
+score.columns=cols2
+score=score.reset_index(drop=True)
+
+
+
+
+#########################
+
+#IMPORT TO SQL
+
+
+# import the module
+from sqlalchemy import create_engine
+
+# create sqlalchemy engine
+engine = create_engine("mysql+pymysql://{user}:{pw}@localhost/{db}"
+                       .format(user="root",
+                               pw="tasmania",
+                               db="djm2"))
+
+course.to_sql('course', con = engine, if_exists = "append",index=False)
+
+print("Done")
+
+
+
+
+#https://www.switchup.org/chimera/v1/bootcamp-data?mainTemplate=bootcamp-data%2Fdescription&path=%2Fbootcamps%2Fironhack&isDataTarget=false&bootcampId=10828&logoTag=logo&truncationLength=250&readMoreOmission=...&readMoreText=Read%20More&readLessText=Read%20Less
